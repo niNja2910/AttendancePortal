@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance Portal</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--tx:#1d2330;--mut:#6b7280;--bd:#dfe3ea;--ac:#128c7e}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1e232b;--tx:#e8ebf0;--mut:#9aa3b2;--bd:#323a46}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px system-ui,sans-serif;padding:16px}
+.wrap{max-width:860px;margin:auto}.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0 0 10px}.mut{color:var(--mut);font-size:13px}
+button{font:inherit;cursor:pointer;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:7px 12px}
+button.pri{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
+textarea,input{width:100%;font:inherit;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
+.row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--bd);flex-wrap:wrap}
+.row:first-child{border-top:0}.nm{flex:1 1 150px;font-weight:500}.opts{display:flex;gap:6px;flex-wrap:wrap}
+.opts button{padding:5px 10px;font-size:13px}.opts button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:600px){.grid{grid-template-columns:1fr}}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+pre{white-space:pre-wrap;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:10px 0 0;font:14px/1.5 ui-monospace,monospace;overflow-x:auto}
+#msg{font-size:13px;margin-top:8px;color:var(--ac)}details{margin-top:10px}summary{cursor:pointer}
+</style></head><body><div class="wrap">
+<div class="card"><h1>Attendance Portal</h1><div class="mut" id="dt"></div></div>
+
+<div class="card"><h2>Mark attendance</h2><div id="list"></div>
+<div class="bar"><button id="allFirst"></button><button id="clear">Clear all</button></div>
+<div class="bar"><button class="pri" id="gen">Generate attendance</button><button id="sync">Update Google Sheet</button></div>
+<div id="msg"></div><div id="outwrap" hidden><pre id="out"></pre><div class="bar"><button class="pri" id="copy">Copy for WhatsApp</button></div></div></div>
+
+<div class="card"><h2>Settings (editable)</h2><div class="grid">
+<div><label class="mut">Names (one per line, up to 30)</label><textarea id="names" rows="12"></textarea></div>
+<div><label class="mut">Options (one per line, e.g. Present, Absent, Leave)</label><textarea id="options" rows="5"></textarea>
+<label class="mut" style="display:block;margin-top:10px">Google Sheet link</label><input id="sheet" placeholder="https://docs.google.com/spreadsheets/d/...">
+<label class="mut" style="display:block;margin-top:10px">Apps Script web app URL</label><input id="script" placeholder="https://script.google.com/macros/s/.../exec"></div></div>
+<div class="bar"><button class="pri" id="save">Save settings</button></div>
+<details><summary>How to connect the Google Sheet (one-time, 2 minutes)</summary>
+<ol class="mut"><li>Open your Sheet → Extensions → Apps Script. Delete existing code and paste the code below.</li>
+<li>Deploy → New deployment → type "Web app" → Execute as: Me, Who has access: Anyone → Deploy, and allow access.</li>
+<li>Copy the Web app URL into the box above, paste your Sheet link too, and Save.</li></ol>
+<pre id="gs"></pre><div class="bar"><button id="cgs">Copy script</button></div>
+<p class="mut">Each sync adds rows (Date, Time, Name, Status) to a tab called "Attendance". Open this file in your own browser/host for syncing to work.</p></details></div>
+</div>
+<script>
+const GS=`function doPost(e){
+  var d=JSON.parse(e.postData.contents);
+  var ss=SpreadsheetApp.openByUrl(d.sheetUrl);
+  var sh=ss.getSheetByName('Attendance')||ss.insertSheet('Attendance');
+  if(sh.getLastRow()==0) sh.appendRow(['Date','Time','Name','Status']);
+  d.records.forEach(function(r){sh.appendRow([d.date,d.time,r.name,r.status]);});
+  return ContentService.createTextOutput('ok');
+}`;
+const $=id=>document.getElementById(id);
+let S={names:[],options:['Present','Absent','Leave'],marks:{},sheet:'',script:''};
+try{const x=JSON.parse(localStorage.getItem('attPortal')||'null');if(x)S=Object.assign(S,x)}catch(e){}
+const store=()=>{try{localStorage.setItem('attPortal',JSON.stringify(S))}catch(e){}};
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const lines=t=>t.split('\n').map(s=>s.trim()).filter(Boolean);
+const now=()=>{const d=new Date();return{date:d.toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}),time:d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}};
+function render(){
+  const n=now();$('dt').textContent=n.date+' • '+n.time;
+  $('names').value=S.names.join('\n');$('options').value=S.options.join('\n');$('sheet').value=S.sheet;$('script').value=S.script;
+  $('allFirst').textContent='Mark all '+(S.options[0]||'');
+  $('list').innerHTML=S.names.length?S.names.map((nm,i)=>`<div class="row"><div class="nm">${i+1}. ${esc(nm)}</div><div class="opts">${S.options.map((o,j)=>`<button data-i="${i}" data-j="${j}" class="${S.marks[nm]===o?'on':''}">${esc(o)}</button>`).join('')}</div></div>`).join(''):'<div class="mut">Add names in Settings below.</div>';
+}
+$('list').onclick=e=>{const b=e.target.closest('button');if(!b)return;const nm=S.names[+b.dataset.i],o=S.options[+b.dataset.j];S.marks[nm]=S.marks[nm]===o?undefined:o;store();render()};
+$('allFirst').onclick=()=>{S.names.forEach(n=>S.marks[n]=S.options[0]);store();render()};
+$('clear').onclick=()=>{S.marks={};store();render();$('outwrap').hidden=true};
+$('save').onclick=()=>{S.names=[...new Set(lines($('names').value))].slice(0,30);S.options=[...new Set(lines($('options').value))];
+  S.sheet=$('sheet').value.trim();S.script=$('script').value.trim();
+  Object.keys(S.marks).forEach(k=>{if(!S.names.includes(k)||!S.options.includes(S.marks[k]))delete S.marks[k]});
+  store();render();$('msg').textContent='Settings saved.'};
+function build(){
+  const n=now(),sorted=[...S.names].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
+  let t=`*Attendance*\n📅 ${n.date}\n⏰ ${n.time}\n`;
+  const groups=S.options.map(o=>[o,sorted.filter(x=>S.marks[x]===o)]);
+  const un=sorted.filter(x=>!S.marks[x]);if(un.length)groups.push(['Not marked',un]);
+  groups.forEach(([o,a])=>{if(a.length)t+=`\n*${o} (${a.length})*\n`+a.map((x,i)=>`${i+1}. ${x}`).join('\n')+'\n'});
+  return t.trim();
+}
+$('gen').onclick=()=>{$('out').textContent=build();$('outwrap').hidden=false;$('msg').textContent=''};
+const copy=async(t,m)=>{try{await navigator.clipboard.writeText(t);$('msg').textContent=m}catch(e){$('msg').textContent='Copy failed — select the text and copy manually.'}};
+$('copy').onclick=()=>copy($('out').textContent,'Copied! Paste it in WhatsApp.');
+$('cgs').onclick=()=>copy(GS,'Script copied.');
+$('sync').onclick=async()=>{
+  if(!S.sheet||!S.script){$('msg').textContent='Add the Sheet link and Apps Script URL in Settings first.';return}
+  const n=now(),records=S.names.map(nm=>({name:nm,status:S.marks[nm]||'Not marked'}));
+  try{await fetch(S.script,{method:'POST',mode:'no-cors',body:JSON.stringify({sheetUrl:S.sheet,date:n.date,time:n.time,records})});
+    $('msg').textContent='Sent to Google Sheet — please check the "Attendance" tab.'}catch(e){$('msg').textContent='Could not reach the script. Check the URL and your connection.'}
+};
+$('gs').textContent=GS;render();
+</script></body></html>
